@@ -1095,21 +1095,37 @@ export async function POST(request: NextRequest) {
         // ═══════════════════════════════════════════
         // LOG GENERATION
         // ═══════════════════════════════════════════
-        const logStatus = hardViolations.length > 0 ? 'failed' : conflicts.length > 0 ? 'partial' : 'success';
+        const logStatus = allAssignments.length === 0 ? 'empty' : conflicts.length > 0 || hardViolations.length > 0 ? 'partial' : 'success';
         db.prepare("INSERT INTO generation_logs (id, execution_time_ms, class_ids_json, status, total_slots, conflict_count, soft_score_json) VALUES (?, ?, ?, ?, ?, ?, ?)")
             .run(uuid(), executionTime, JSON.stringify(class_ids), logStatus, allAssignments.length, conflicts.length, JSON.stringify(softScores));
 
         releaseLock(db);
 
+        // Build actionable suggestions from conflicts
+        const suggestions: string[] = [];
+        for (const c of conflicts) {
+            if (c.includes('No faculty available')) suggestions.push(`💡 ${c} — add faculty interests or register more faculty`);
+            else if (c.includes('Cannot place lab')) suggestions.push(`💡 ${c} — try adding more labs or reduce lab hours`);
+            else if (c.includes('Cannot place')) suggestions.push(`💡 ${c} — reduce hours_per_week or add more time slots`);
+            else if (c.includes('periods needed')) suggestions.push(`💡 ${c} — reduce subject hours or increase periods_per_day`);
+            else suggestions.push(`⚠ ${c}`);
+        }
+        for (const hv of hardViolations) {
+            suggestions.push(`⚠ Post-check: ${hv}`);
+        }
+
         return NextResponse.json({
-            success: hardViolations.length === 0,
-            message: `Generated for ${class_ids.length} class(es)`,
+            success: allAssignments.length > 0,
+            message: allAssignments.length > 0
+                ? `Generated ${allAssignments.length} slots for ${class_ids.length} class(es)${suggestions.length > 0 ? ` with ${suggestions.length} suggestion(s)` : ''}`
+                : 'No slots could be generated — check suggestions below',
             total_slots: allAssignments.length,
             period_times: PERIOD_TIMES,
-            algorithm: 'CSP + MRV heuristic + Simulated Annealing (v2.0)',
+            algorithm: 'CSP + MRV heuristic + Simulated Annealing + Faculty Interest FCFS (v3.0)',
             optimizations: improvements,
             execution_time_ms: executionTime,
             soft_scores: softScores,
+            suggestions: suggestions.length > 0 ? suggestions : undefined,
             hard_violations: hardViolations.length > 0 ? hardViolations : undefined,
             conflicts: conflicts.length > 0 ? conflicts : undefined,
         });
