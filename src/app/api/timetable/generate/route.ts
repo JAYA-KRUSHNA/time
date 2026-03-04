@@ -31,7 +31,8 @@ import { getDb, uuid } from '@/lib/db';
 
 // ─── Types ───────────────────────────────────────────────────
 interface SubjectRow { id: string; name: string; type: string; hours_per_week: number; lab_type_id: string | null; }
-interface FacultyAssignmentRow { faculty_id: string; subject_id: string; faculty_name?: string; }
+interface FacultyAssignmentRow { faculty_id: string; subject_id: string; faculty_name: string; }
+interface FacultyInterestRow { faculty_id: string; subject_id: string; faculty_name: string; subject_name: string; subject_type: string; created_at: string; }
 interface FreePeriodInput { name: string; periods_per_week: number; }
 
 interface SubjectReq {
@@ -326,6 +327,31 @@ export async function POST(request: NextRequest) {
         }
 
         // ═══════════════════════════════════════════
+        // LOAD ALL FACULTY INTERESTS (FCFS order)
+        // ═══════════════════════════════════════════
+        const allInterests = db.prepare(`
+            SELECT fs.faculty_id, fs.subject_id, p.name as faculty_name,
+                   s.name as subject_name, s.type as subject_type,
+                   COALESCE(fs.created_at, datetime('now')) as created_at
+            FROM faculty_subjects fs
+            JOIN profiles p ON fs.faculty_id = p.id
+            JOIN subjects s ON fs.subject_id = s.id
+            WHERE p.status = 'active'
+            ORDER BY fs.created_at ASC
+        `).all() as FacultyInterestRow[];
+
+        // All active faculty (fallback pool)
+        const allFaculty = db.prepare("SELECT id, name FROM profiles WHERE role = 'faculty' AND status = 'active'").all() as { id: string; name: string }[];
+
+        // Track: which subjects each faculty is assigned to per year (R5: no multi-subject per year)
+        // Key: "facultyId|year" → Set of subject *names* (not IDs, so lab+theory of same subject count as one)
+        const facultyYearSubjects = new Map<string, Set<string>>();
+        // Track: which sections each faculty is assigned to per year (R8: prefer single section)
+        const facultyYearSections = new Map<string, Set<string>>();
+        // Track: total assignments per faculty (for load balancing)
+        const facultyTotalLoad = new Map<string, number>();
+
+        // ═══════════════════════════════════════════
         // BUILD CLASS INFO
         // ═══════════════════════════════════════════
         const classInfos: ClassInfo[] = [];
@@ -334,12 +360,11 @@ export async function POST(request: NextRequest) {
             if (!cls) { conflicts.push(`Class ${classId} not found`); continue; }
             const sec = db.prepare('SELECT section_name, student_count FROM sections WHERE id = ?').get(cls.section_id) as { section_name: string; student_count: number } | undefined;
             const sectionLabel = sec ? `Y${cls.year}-${sec.section_name}` : classId;
+            const sectionName = sec?.section_name || classId;
             const studentCount = sec?.student_count || 0;
 
             const subjects = db.prepare("SELECT id, name, type, hours_per_week, lab_type_id FROM subjects WHERE department_id = ? AND type != 'free'").all(cls.department_id) as SubjectRow[];
             if (subjects.length === 0 && free_periods.length === 0) { conflicts.push(`No subjects for ${sectionLabel}`); continue; }
-
-            const fa = db.prepare('SELECT fa.faculty_id, fa.subject_id, p.name as faculty_name FROM faculty_assignments fa LEFT JOIN profiles p ON fa.faculty_id = p.id WHERE fa.class_id = ?').all(classId) as FacultyAssignmentRow[];
 
             const requirements: SubjectReq[] = subjects.map(s => ({
                 id: s.id, name: s.name, type: s.type, remaining: s.hours_per_week, labTypeId: s.lab_type_id,
@@ -365,7 +390,104 @@ export async function POST(request: NextRequest) {
                 for (const r of requirements) r.remaining = Math.max(1, Math.round(r.remaining * scale));
             }
 
-            classInfos.push({ classId, year: cls.year, sectionLabel, studentCount, requirements, facultyAssignments: fa, labDayCount: {} });
+            // ═══════════════════════════════════════════
+            // PHASE 0: AUTO-ASSIGN FACULTY FROM INTERESTS
+            // ═══════════════════════════════════════════
+            const autoFacultyAssignments: FacultyAssignmentRow[] = [];
+
+            for (const subj of requirements) {
+                if (subj.isFree) continue; // No faculty for free periods
+
+                // 1. Find interested faculty for this subject (FCFS order via created_at)
+                const interested = allInterests.filter(i => i.subject_id === subj.id);
+
+                // 2. Filter candidates by constraints
+                const validCandidates: { faculty_id: string; faculty_name: string; score: number }[] = [];
+
+                for (const cand of interested) {
+                    const fyk = `${cand.faculty_id}|${cls.year}`;
+                    const existingSubjects = facultyYearSubjects.get(fyk) || new Set();
+
+                    // R5: Faculty can't teach multiple DIFFERENT subjects for same year
+                    // R7: Exception — same subject name as lab+theory is OK (e.g., DBMS lab + DBMS theory)
+                    const subjectBaseName = subj.name.replace(/\s*(lab|theory|practical)\s*/gi, '').trim().toLowerCase();
+                    const hasConflictingSubject = [...existingSubjects].some(existingName => {
+                        const existingBase = existingName.replace(/\s*(lab|theory|practical)\s*/gi, '').trim().toLowerCase();
+                        return existingBase !== subjectBaseName;
+                    });
+                    if (hasConflictingSubject) continue;
+
+                    // Score: prefer faculty not yet in another section of same year (R8)
+                    let score = 100; // base interest score
+                    const existingSections = facultyYearSections.get(fyk) || new Set();
+                    if (existingSections.size > 0 && !existingSections.has(sectionName)) {
+                        score -= 50; // Penalize multi-section, but don't block
+                    }
+
+                    // Prefer faculty with lower total load
+                    const load = facultyTotalLoad.get(cand.faculty_id) || 0;
+                    score -= load * 2;
+
+                    validCandidates.push({ faculty_id: cand.faculty_id, faculty_name: cand.faculty_name, score });
+                }
+
+                // 3. If >3 interested, take top 3 by FCFS (already ordered), then pick best score
+                let selected: { faculty_id: string; faculty_name: string } | null = null;
+                if (validCandidates.length > 0) {
+                    // Take first 3 (FCFS order preserved from allInterests)
+                    const top3 = validCandidates.slice(0, 3);
+                    // Pick the one with highest score
+                    top3.sort((a, b) => b.score - a.score);
+                    selected = top3[0];
+                }
+
+                // 4. Fallback: if no interested faculty, assign any available faculty
+                if (!selected) {
+                    for (const fac of allFaculty) {
+                        const fyk = `${fac.id}|${cls.year}`;
+                        const existingSubjects = facultyYearSubjects.get(fyk) || new Set();
+                        const subjectBaseName = subj.name.replace(/\s*(lab|theory|practical)\s*/gi, '').trim().toLowerCase();
+                        const hasConflict = [...existingSubjects].some(en => {
+                            return en.replace(/\s*(lab|theory|practical)\s*/gi, '').trim().toLowerCase() !== subjectBaseName;
+                        });
+                        if (hasConflict) continue;
+
+                        const existingSections = facultyYearSections.get(fyk) || new Set();
+                        if (existingSections.size > 0 && !existingSections.has(sectionName)) continue;
+
+                        selected = { faculty_id: fac.id, faculty_name: fac.name };
+                        break;
+                    }
+                }
+
+                if (selected) {
+                    autoFacultyAssignments.push({
+                        faculty_id: selected.faculty_id,
+                        subject_id: subj.id,
+                        faculty_name: selected.faculty_name,
+                    });
+
+                    // Update tracking maps
+                    const fyk = `${selected.faculty_id}|${cls.year}`;
+                    if (!facultyYearSubjects.has(fyk)) facultyYearSubjects.set(fyk, new Set());
+                    facultyYearSubjects.get(fyk)!.add(subj.name);
+                    if (!facultyYearSections.has(fyk)) facultyYearSections.set(fyk, new Set());
+                    facultyYearSections.get(fyk)!.add(sectionName);
+                    facultyTotalLoad.set(selected.faculty_id, (facultyTotalLoad.get(selected.faculty_id) || 0) + subj.remaining);
+                } else {
+                    conflicts.push(`No faculty available for "${subj.name}" in ${sectionLabel}`);
+                }
+            }
+
+            // Save auto-assignments to DB for this class
+            db.prepare('DELETE FROM faculty_assignments WHERE class_id = ?').run(classId);
+            for (const fa of autoFacultyAssignments) {
+                db.prepare('INSERT INTO faculty_assignments (id, faculty_id, class_id, subject_id) VALUES (?, ?, ?, ?)').run(
+                    uuid(), fa.faculty_id, classId, fa.subject_id
+                );
+            }
+
+            classInfos.push({ classId, year: cls.year, sectionLabel, studentCount, requirements, facultyAssignments: autoFacultyAssignments, labDayCount: {} });
         }
 
         // Sort classes by most constrained first (MRV heuristic)
@@ -380,9 +502,13 @@ export async function POST(request: NextRequest) {
         // ═══════════════════════════════════════════
         // HELPER: Check ALL hard constraints for a faculty at a slot
         // ═══════════════════════════════════════════
-        function isFacultyBlocked(facultyId: string, sk: string): boolean {
+        function isFacultyBlocked(facultyId: string, day: string, period: number): boolean {
+            const sk = `${day}_${period}`;
             if (facultyUnavailable.get(facultyId)?.has(sk)) return true;   // H4: availability
-            if (idx.isFacultyBusy(facultyId, sk)) return true;             // H1: double-booking
+            if (idx.isFacultyBusy(facultyId, sk)) return true;             // H1+R3+R6: double-booking across ALL timetables
+            // R4: Faculty must get ≥1 empty period per day
+            const dayLoad = idx.getFacultyDayLoad(facultyId, day);
+            if (dayLoad >= periods_per_day - 1) return true;               // Would leave 0 free periods
             return false;
         }
 
@@ -522,11 +648,11 @@ export async function POST(request: NextRequest) {
                         }
                         if (!classFree) continue;
 
-                        // H4+H1: Faculty available for ALL consecutive periods
+                        // H4+H1+R3+R4: Faculty available for ALL consecutive periods
                         if (faculty) {
                             let facultyOk = true;
                             for (let o = 0; o < lab_consecutive_periods; o++) {
-                                if (isFacultyBlocked(faculty.faculty_id, `${day}_${startP + o}`)) { facultyOk = false; break; }
+                                if (isFacultyBlocked(faculty.faculty_id, day, startP + o)) { facultyOk = false; break; }
                             }
                             if (!facultyOk) continue;
                         }
@@ -592,9 +718,9 @@ export async function POST(request: NextRequest) {
                             const sk = `${day}_${p}`;
                             if (idx.isClassSlotUsed(ci.classId, sk)) continue;
 
-                            // H1+H4: Faculty hard check
+                            // H1+H4+R3+R4+R6: Faculty hard check
                             const faculty = ci.facultyAssignments.find(fa => fa.subject_id === subj.id);
-                            if (faculty && isFacultyBlocked(faculty.faculty_id, sk)) continue;
+                            if (faculty && isFacultyBlocked(faculty.faculty_id, day, p)) continue;
 
                             // H2+H5+H6: Room
                             const roomId = findRoom(sk, ci, 'theory');
@@ -678,7 +804,7 @@ export async function POST(request: NextRequest) {
 
                             // ★ FIX: Check faculty constraints even in force-fill
                             const faculty = ci.facultyAssignments.find(fa => fa.subject_id === subj.id);
-                            if (faculty && isFacultyBlocked(faculty.faculty_id, sk)) continue;
+                            if (faculty && isFacultyBlocked(faculty.faculty_id, day, p)) continue;
 
                             const a: Assignment = {
                                 class_id: ci.classId, day, period: p,
@@ -743,12 +869,11 @@ export async function POST(request: NextRequest) {
                 // ★ FIX: Verify ALL hard constraints before swap
                 // Check faculty at new positions
                 if (f1 && f1.faculty_id !== f2?.faculty_id) {
-                    // f1 would move to sk2 — need to check if f1 is blocked at sk2
-                    // But first remove f1 from sk1 temporarily
-                    if (isFacultyBlocked(f1.faculty_id, sk2)) continue;
+                    // f1 would move to a2's slot — check if f1 is blocked there
+                    if (isFacultyBlocked(f1.faculty_id, a2.day, a2.period)) continue;
                 }
                 if (f2 && f2.faculty_id !== f1?.faculty_id) {
-                    if (isFacultyBlocked(f2.faculty_id, sk1)) continue;
+                    if (isFacultyBlocked(f2.faculty_id, a1.day, a1.period)) continue;
                 }
 
                 // Check rooms: can the swapped rooms fit?

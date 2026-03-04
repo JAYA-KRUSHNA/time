@@ -32,6 +32,7 @@ function runMigrations(db: Database.Database) {
 
   safeAddColumn('rooms', 'type', "TEXT DEFAULT 'theory'");
   safeAddColumn('subjects', 'subject_code', 'TEXT');
+  safeAddColumn('faculty_subjects', 'created_at', "TEXT DEFAULT (datetime('now'))");
 }
 
 function initializeDb(db: Database.Database) {
