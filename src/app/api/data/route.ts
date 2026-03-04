@@ -72,11 +72,14 @@ export async function GET(request: NextRequest) {
             const cls = db.prepare('SELECT id FROM classes WHERE section_id = ? AND department_id = ?').get(section.id, dept.id) as { id: string } | undefined;
             if (!cls) return NextResponse.json([]);
             const entries = db.prepare(`
-        SELECT t.day, t.period, s.name as subject_name, s.type as subject_type, r.name as room_name, l.name as lab_name
+        SELECT t.day, t.period, s.name as subject_name, s.type as subject_type,
+          r.name as room_name, l.name as lab_name, p.name as faculty_name
         FROM timetables t
         LEFT JOIN subjects s ON t.subject_id = s.id
         LEFT JOIN rooms r ON t.room_id = r.id
         LEFT JOIN labs l ON t.lab_id = l.id
+        LEFT JOIN faculty_schedule fs ON fs.class_id = t.class_id AND fs.day = t.day AND fs.period = t.period
+        LEFT JOIN profiles p ON fs.faculty_id = p.id
         WHERE t.class_id = ? ORDER BY t.period
       `).all(cls.id);
             return NextResponse.json(entries);
@@ -159,6 +162,12 @@ export async function GET(request: NextRequest) {
         case 'calendar': {
             const events = db.prepare('SELECT * FROM academic_calendar ORDER BY date').all();
             return NextResponse.json(events);
+        }
+        case 'notifications': {
+            const user = await getCurrentUser();
+            if (!user) return NextResponse.json([]);
+            const notifications = db.prepare('SELECT id, type, title, body, read_status, created_at FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 50').all(user.id);
+            return NextResponse.json(notifications);
         }
         default:
             return NextResponse.json({ error: 'Unknown table' }, { status: 400 });

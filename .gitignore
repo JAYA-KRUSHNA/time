@@ -53,3 +53,7 @@ prisma/*.db-journal
 .vscode/
 *.swp
 *.swo
+
+# Environment
+.env.local
+.env*.local

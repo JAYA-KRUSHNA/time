@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
-import { Search, Trash2, UserPlus, X, Eye, EyeOff } from 'lucide-react';
+import { Search, Trash2, UserPlus, X, Eye, EyeOff, Users } from 'lucide-react';
 
 interface User { id: string; role: string; name: string; email: string; reg_no?: string; year?: number; section?: string; status: string; is_original_superadmin?: boolean; }
 
@@ -57,27 +57,44 @@ export default function UserManagementPage() {
 
     return (
         <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 }}>
                 <div>
-                    <h1 style={{ fontSize: 26, fontWeight: 700, color: '#f1f5f9', marginBottom: 4 }}>User Management</h1>
-                    <p style={{ color: '#94a3b8', fontSize: 14 }}>{users.length} total users</p>
+                    <h1 style={{ fontSize: 26, fontWeight: 700, color: '#f1f5f9', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <Users size={24} color="#6366f1" />User Management
+                    </h1>
+                    <p style={{ color: '#64748b', fontSize: 14 }}>{users.length} total users</p>
                 </div>
-                <button
+                <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
                     onClick={() => setShowAddFaculty(true)}
                     style={{
                         display: 'flex', alignItems: 'center', gap: 8,
-                        padding: '10px 20px', borderRadius: 10, cursor: 'pointer',
+                        padding: '10px 20px', borderRadius: 12, cursor: 'pointer',
                         background: 'linear-gradient(135deg, #6366f1, #818cf8)',
                         border: 'none', color: 'white', fontSize: 13, fontWeight: 600,
+                        boxShadow: '0 4px 15px rgba(99,102,241,0.3)',
                     }}
                 >
                     <UserPlus size={16} /> Add Faculty
-                </button>
+                </motion.button>
+            </div>
+
+            {/* Role Stats */}
+            <div style={{ display: 'flex', gap: 10, marginBottom: 20 }}>
+                {['student', 'faculty', 'admin', 'superadmin'].map(r => {
+                    const count = users.filter(u => u.role === r).length;
+                    return (
+                        <div key={r} style={{ padding: '8px 14px', borderRadius: 10, background: `${roleColors[r]}08`, border: `1px solid ${roleColors[r]}15`, display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span style={{ width: 8, height: 8, borderRadius: 2, background: roleColors[r] }} />
+                            <span style={{ fontSize: 11, color: '#94a3b8', textTransform: 'capitalize' }}>{r}</span>
+                            <span style={{ fontSize: 13, fontWeight: 700, color: '#f1f5f9' }}>{count}</span>
+                        </div>
+                    );
+                })}
             </div>
 
             {/* Add Faculty Modal */}
             {showAddFaculty && (
-                <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                     onClick={() => setShowAddFaculty(false)}>
                     <motion.div
                         initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}
@@ -160,7 +177,7 @@ export default function UserManagementPage() {
                                 <p style={{ fontSize: 12, color: '#64748b' }}>{u.email}{u.reg_no ? ` · ${u.reg_no}` : ''}{u.section ? ` · ${u.section}` : ''}</p>
                             </div>
                         </div>
-                        {!u.is_original_superadmin && <button onClick={() => deleteUser(u.id, u.name)} style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer' }}><Trash2 size={16} /></button>}
+                        {!u.is_original_superadmin && <motion.button whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }} onClick={() => deleteUser(u.id, u.name)} style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.15)', borderRadius: 8, padding: 6, color: '#f87171', cursor: 'pointer' }}><Trash2 size={14} /></motion.button>}
                     </motion.div>
                 ))}
             </div>

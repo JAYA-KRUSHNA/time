@@ -34,7 +34,7 @@ export default function TimetableGeneratorPage() {
     const [newFree, setNewFree] = useState({ name: '', periods_per_week: 1 });
     const [rules, setRules] = useState({ periods_per_day: 7, break_after_period: 4, max_consecutive_theory: 3, lab_requires_consecutive: true, lab_consecutive_periods: 2 });
     const [generating, setGenerating] = useState(false);
-    const [result, setResult] = useState<{ success: boolean; total_slots: number; conflicts?: string[] } | null>(null);
+    const [result, setResult] = useState<{ success: boolean; total_slots: number; conflicts?: string[]; hard_violations?: string[]; optimizations?: number; execution_time_ms?: number; soft_scores?: { total_score: number; consecutive_violations: number; distribution_score: number; back_to_back_labs: number; room_switches: number } } | null>(null);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
@@ -85,7 +85,8 @@ export default function TimetableGeneratorPage() {
 
     const handleGenerate = async () => {
         if (selectedClasses.length === 0) { toast.error('Select at least one class'); return; }
-        if (selectedRooms.length === 0) { toast.error('Select at least one classroom'); return; }
+        // Rooms are optional — generator will work without them
+        // if (selectedRooms.length === 0) { toast.error('Select at least one classroom'); return; }
         setGenerating(true); setResult(null);
 
         // Create class records
@@ -343,15 +344,45 @@ export default function TimetableGeneratorPage() {
                             </div>
                         ) : (
                             <div style={{ textAlign: 'center' }}>
-                                <div style={{ width: 64, height: 64, borderRadius: '50%', background: result.success ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', fontSize: 32 }}>{result.success ? '✓' : '!'}</div>
-                                <h3 style={{ fontSize: 18, fontWeight: 600, color: result.success ? '#22c55e' : '#f87171' }}>{result.success ? 'Generation Complete' : 'Issues Found'}</h3>
-                                <p style={{ color: '#94a3b8', fontSize: 14, margin: '8px 0 16px' }}>{result.total_slots} slots assigned</p>
-                                {result.conflicts && result.conflicts.length > 0 && (
-                                    <div style={{ textAlign: 'left', maxWidth: 500, margin: '0 auto', padding: 16, borderRadius: 10, background: 'rgba(239,68,68,0.05)', border: '1px solid rgba(239,68,68,0.15)', maxHeight: 200, overflowY: 'auto' }}>
-                                        {result.conflicts.map((c, i) => <p key={i} style={{ fontSize: 12, color: '#f87171', marginBottom: 4 }}>⚠ {c}</p>)}
-                                    </div>
-                                )}
-                                <button onClick={() => { setResult(null); handleGenerate(); }} className="btn-primary" style={{ marginTop: 16, padding: '10px 20px' }}><span style={{ position: 'relative', zIndex: 1 }}>Regenerate</span></button>
+                                {/* Show success if slots were generated, even with soft conflicts */}
+                                {(() => {
+                                    const hasHardViolations = result.hard_violations && result.hard_violations.length > 0;
+                                    const generated = result.total_slots > 0;
+                                    const isSuccess = generated && !hasHardViolations;
+                                    return (
+                                        <>
+                                            <div style={{ width: 64, height: 64, borderRadius: '50%', background: isSuccess ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', fontSize: 32 }}>{isSuccess ? '✓' : '!'}</div>
+                                            <h3 style={{ fontSize: 18, fontWeight: 600, color: isSuccess ? '#22c55e' : '#f87171' }}>{isSuccess ? 'Generation Complete' : 'Generation Failed'}</h3>
+                                            <p style={{ color: '#94a3b8', fontSize: 14, margin: '8px 0 4px' }}>{result.total_slots} slots assigned</p>
+                                            {result.execution_time_ms && <p style={{ color: '#64748b', fontSize: 12, marginBottom: 4 }}>Completed in {result.execution_time_ms}ms</p>}
+                                            {result.optimizations !== undefined && result.optimizations > 0 && <p style={{ color: '#818cf8', fontSize: 12, marginBottom: 12 }}>{result.optimizations} optimization swaps applied</p>}
+                                            {result.soft_scores && (
+                                                <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap', margin: '8px 0 16px' }}>
+                                                    <span style={{ fontSize: 12, padding: '4px 10px', borderRadius: 6, background: 'rgba(99,102,241,0.1)', color: '#818cf8' }}>Quality: {result.soft_scores.total_score}</span>
+                                                    <span style={{ fontSize: 12, padding: '4px 10px', borderRadius: 6, background: 'rgba(34,197,94,0.1)', color: '#22c55e' }}>Spread: {result.soft_scores.distribution_score}</span>
+                                                    {result.soft_scores.consecutive_violations > 0 && <span style={{ fontSize: 12, padding: '4px 10px', borderRadius: 6, background: 'rgba(245,158,11,0.1)', color: '#fbbf24' }}>Consecutive: {result.soft_scores.consecutive_violations}</span>}
+                                                    {result.soft_scores.room_switches > 0 && <span style={{ fontSize: 12, padding: '4px 10px', borderRadius: 6, background: 'rgba(245,158,11,0.1)', color: '#fbbf24' }}>Room switches: {result.soft_scores.room_switches}</span>}
+                                                </div>
+                                            )}
+                                            {hasHardViolations && (
+                                                <div style={{ textAlign: 'left', maxWidth: 500, margin: '0 auto 12px', padding: 16, borderRadius: 10, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', maxHeight: 150, overflowY: 'auto' }}>
+                                                    <p style={{ fontSize: 13, fontWeight: 600, color: '#f87171', marginBottom: 6 }}>Hard Constraint Violations:</p>
+                                                    {result.hard_violations!.map((v, i) => <p key={i} style={{ fontSize: 12, color: '#f87171', marginBottom: 3 }}>✕ {v}</p>)}
+                                                </div>
+                                            )}
+                                            {result.conflicts && result.conflicts.length > 0 && !hasHardViolations && (
+                                                <div style={{ textAlign: 'left', maxWidth: 500, margin: '0 auto 12px', padding: 16, borderRadius: 10, background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.15)', maxHeight: 150, overflowY: 'auto' }}>
+                                                    <p style={{ fontSize: 13, fontWeight: 600, color: '#fbbf24', marginBottom: 6 }}>Warnings (non-blocking):</p>
+                                                    {result.conflicts.map((c, i) => <p key={i} style={{ fontSize: 12, color: '#fbbf24', marginBottom: 3 }}>⚠ {c}</p>)}
+                                                </div>
+                                            )}
+                                            <div style={{ display: 'flex', gap: 10, justifyContent: 'center', marginTop: 16 }}>
+                                                <button onClick={() => { setResult(null); handleGenerate(); }} className="btn-primary" style={{ padding: '10px 20px' }}><span style={{ position: 'relative', zIndex: 1 }}>Regenerate</span></button>
+                                                {isSuccess && <button onClick={() => window.location.href = '/admin/timetables'} style={{ padding: '10px 20px', borderRadius: 10, border: '1px solid rgba(34,197,94,0.3)', background: 'rgba(34,197,94,0.08)', color: '#22c55e', cursor: 'pointer', fontSize: 14 }}>View Timetables →</button>}
+                                            </div>
+                                        </>
+                                    );
+                                })()}
                             </div>
                         )}
                     </div>

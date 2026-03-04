@@ -14,21 +14,55 @@ export async function DELETE(request: NextRequest) {
     if (!profile) return NextResponse.json({ error: 'User not found' }, { status: 404 });
     if (profile.is_original_superadmin) return NextResponse.json({ error: 'Cannot delete original super admin' }, { status: 403 });
 
-    // If student with section, decrement section count
-    if (profile.role === 'student' && profile.section && profile.year) {
-        const dept = db.prepare("SELECT id FROM departments WHERE code = 'CSE'").get() as { id: string } | undefined;
-        if (dept) {
-            db.prepare('UPDATE sections SET student_count = MAX(0, student_count - 1) WHERE department_id = ? AND year = ? AND section_name = ?').run(
-                dept.id, profile.year, profile.section
-            );
+    // Use transaction to ensure complete cascade deletion
+    db.transaction(() => {
+        // If student with section, decrement section count
+        if (profile.role === 'student' && profile.section && profile.year) {
+            const dept = db.prepare("SELECT id FROM departments WHERE code = 'CSE'").get() as { id: string } | undefined;
+            if (dept) {
+                db.prepare('UPDATE sections SET student_count = MAX(0, student_count - 1) WHERE department_id = ? AND year = ? AND section_name = ?').run(
+                    dept.id, profile.year, profile.section
+                );
+            }
         }
-    }
 
-    // Clean up OTP codes for this user
-    db.prepare('DELETE FROM otp_codes WHERE email = ?').run(profile.email);
+        // ═══════════════════════════════════════════
+        // CASCADE DELETE — remove ALL traces of user
+        // ═══════════════════════════════════════════
 
-    // Delete the user
-    db.prepare('DELETE FROM profiles WHERE id = ?').run(id);
+        // Auth & verification
+        db.prepare('DELETE FROM otp_codes WHERE email = ?').run(profile.email);
+
+        // Faculty-specific data
+        db.prepare('DELETE FROM faculty_assignments WHERE faculty_id = ?').run(id);
+        db.prepare('DELETE FROM faculty_subjects WHERE faculty_id = ?').run(id);
+        db.prepare('DELETE FROM faculty_schedule WHERE faculty_id = ?').run(id);
+        db.prepare('DELETE FROM faculty_availability WHERE faculty_id = ?').run(id);
+
+        // Messaging — delete messages they sent, and conversations they're in
+        // Get conversation IDs where this user is a participant
+        const convos = db.prepare("SELECT id, participant_ids FROM conversations").all() as { id: string; participant_ids: string }[];
+        for (const c of convos) {
+            try {
+                const pids = JSON.parse(c.participant_ids) as string[];
+                if (pids.includes(id)) {
+                    // Delete all messages in this conversation
+                    db.prepare('DELETE FROM messages WHERE conversation_id = ?').run(c.id);
+                    // Delete the conversation itself
+                    db.prepare('DELETE FROM conversations WHERE id = ?').run(c.id);
+                }
+            } catch { /* skip malformed JSON */ }
+        }
+
+        // Notifications
+        db.prepare('DELETE FROM notifications WHERE user_id = ?').run(id);
+
+        // Audit logs (keep for audit trail but clear user_id reference)
+        db.prepare('UPDATE audit_logs SET user_id = NULL WHERE user_id = ?').run(id);
+
+        // Finally, delete the profile
+        db.prepare('DELETE FROM profiles WHERE id = ?').run(id);
+    })();
 
     return NextResponse.json({ success: true });
 }

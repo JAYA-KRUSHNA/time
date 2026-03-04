@@ -8,7 +8,8 @@ export async function POST(request: NextRequest) {
         if (!email || !password) return NextResponse.json({ error: 'Email and password required' }, { status: 400 });
 
         const db = getDb();
-        const user = db.prepare('SELECT id, email, role, password, status FROM profiles WHERE email = ?').get(email) as { id: string; email: string; role: string; password: string; status: string } | undefined;
+        const normalizedEmail = email.trim().toLowerCase();
+        const user = db.prepare('SELECT id, email, role, password, status FROM profiles WHERE LOWER(email) = ?').get(normalizedEmail) as { id: string; email: string; role: string; password: string; status: string } | undefined;
 
         if (!user) return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });
 

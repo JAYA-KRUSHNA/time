@@ -12,13 +12,17 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'All fields are required' }, { status: 400 });
         }
 
+        // Normalize email and reg_no to lowercase for case-insensitive uniqueness
+        const normalizedEmail = email.trim().toLowerCase();
+        const normalizedRegNo = reg_no.trim().toUpperCase(); // Reg numbers are typically uppercase
+
         const db = getDb();
 
-        // Check existing
-        const existingEmail = db.prepare('SELECT id FROM profiles WHERE email = ?').get(email);
+        // Check existing (case-insensitive)
+        const existingEmail = db.prepare('SELECT id FROM profiles WHERE LOWER(email) = ?').get(normalizedEmail);
         if (existingEmail) return NextResponse.json({ error: 'Email already registered' }, { status: 409 });
 
-        const existingReg = db.prepare('SELECT id FROM profiles WHERE reg_no = ?').get(reg_no);
+        const existingReg = db.prepare('SELECT id FROM profiles WHERE UPPER(reg_no) = ?').get(normalizedRegNo);
         if (existingReg) return NextResponse.json({ error: 'Registration number already exists' }, { status: 409 });
 
         const hash = await hashPassword(password);
@@ -26,7 +30,7 @@ export async function POST(request: NextRequest) {
 
         // Set status to 'unverified' — will become 'active' after OTP verification
         db.prepare('INSERT INTO profiles (id, role, name, email, password, reg_no, year, section, department, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
-            id, 'student', name, email, hash, reg_no, year || null, section || null, 'CSE', 'unverified'
+            id, 'student', name, normalizedEmail, hash, normalizedRegNo, year || null, section || null, 'CSE', 'unverified'
         );
 
         // Increment section count
@@ -38,15 +42,15 @@ export async function POST(request: NextRequest) {
         }
 
         // Send OTP for email verification
-        db.prepare("DELETE FROM otp_codes WHERE email = ? AND purpose = 'verification'").run(email);
+        db.prepare("DELETE FROM otp_codes WHERE email = ? AND purpose = 'verification'").run(normalizedEmail);
         const otp = generateOTP();
         const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
         db.prepare('INSERT INTO otp_codes (id, email, code, purpose, attempts, max_attempts, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
             uuid(), email, otp, 'verification', 0, 3, expiresAt
         );
-        await sendOTPEmail(email, otp, name);
+        await sendOTPEmail(normalizedEmail, otp, name);
 
-        return NextResponse.json({ success: true, email, message: 'OTP sent for verification' });
+        return NextResponse.json({ success: true, email: normalizedEmail, message: 'OTP sent for verification' });
     } catch (error) {
         console.error('Register error:', error);
         return NextResponse.json({ error: 'Registration failed' }, { status: 500 });

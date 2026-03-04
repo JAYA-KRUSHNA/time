@@ -49,10 +49,18 @@ export default function AdminMessagesPage() {
     const sendBroadcast = async () => {
         if (!broadcastMsg.trim()) return;
         setSending(true);
-        const res = await fetch('/api/data', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'broadcast', target: broadcastTarget, content: broadcastMsg.trim() }) });
-        const data = await res.json();
-        toast.success(`Broadcast sent to ${data.count} users`);
-        setBroadcastMsg(''); setSending(false);
+        try {
+            const res = await fetch('/api/data', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'broadcast', target: broadcastTarget, content: broadcastMsg.trim() }) });
+            const data = await res.json();
+            if (!res.ok) { toast.error(data.error || 'Failed to send broadcast'); setSending(false); return; }
+            toast.success(`Broadcast sent to ${data.count || 0} users`);
+            setBroadcastMsg('');
+        } catch (err) {
+            toast.error('Network error sending broadcast');
+            console.error('Broadcast error:', err);
+        } finally {
+            setSending(false);
+        }
     };
 
     const filteredUsers = users.filter(u => searchUser && u.name.toLowerCase().includes(searchUser.toLowerCase()));

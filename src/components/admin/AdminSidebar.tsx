@@ -6,7 +6,7 @@ import { usePathname } from 'next/navigation';
 import {
     LayoutDashboard, BookOpen, Users, ClipboardCheck, GraduationCap,
     Calendar, FileText, MessageSquare, Shield, Settings, LogOut,
-    Menu, X, ChevronRight, DoorOpen,
+    Menu, X, ChevronRight, DoorOpen, Upload, Activity,
 } from 'lucide-react';
 
 import { useRouter } from 'next/navigation';
@@ -21,11 +21,13 @@ const navItems = [
     { icon: LayoutDashboard, label: 'Dashboard', href: '/admin', id: 'dashboard' },
     { icon: BookOpen, label: 'College Structure', href: '/admin/structure', id: 'structure' },
     { icon: DoorOpen, label: 'Rooms & Labs', href: '/admin/rooms', id: 'rooms' },
+    { icon: Upload, label: 'Data Import', href: '/admin/data-import', id: 'data-import' },
     { icon: Users, label: 'User Management', href: '/admin/users', id: 'users' },
     { icon: ClipboardCheck, label: 'Faculty Approvals', href: '/admin/approvals', id: 'approvals' },
     { icon: GraduationCap, label: 'Faculty Interests', href: '/admin/faculty-interests', id: 'faculty-interests' },
     { icon: Calendar, label: 'Timetable Generator', href: '/admin/timetable', id: 'timetable' },
     { icon: FileText, label: 'Generated Timetables', href: '/admin/timetables', id: 'timetables' },
+    { icon: Activity, label: 'Generation Logs', href: '/admin/logs', id: 'logs' },
     { icon: MessageSquare, label: 'Messages', href: '/admin/messages', id: 'messages' },
 ];
 

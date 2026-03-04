@@ -11,8 +11,27 @@ export function getDb(): Database.Database {
     _db.pragma('journal_mode = WAL');
     _db.pragma('foreign_keys = ON');
     initializeDb(_db);
+    runMigrations(_db);
   }
   return _db;
+}
+
+// Safely add columns that may be missing in older databases
+function runMigrations(db: Database.Database) {
+  const safeAddColumn = (table: string, column: string, definition: string) => {
+    try {
+      const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+      if (!cols.find(c => c.name === column)) {
+        db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+        console.log(`✅ Migration: Added ${table}.${column}`);
+      }
+    } catch (e) {
+      console.warn(`Migration skipped for ${table}.${column}:`, e);
+    }
+  };
+
+  safeAddColumn('rooms', 'type', "TEXT DEFAULT 'theory'");
+  safeAddColumn('subjects', 'subject_code', 'TEXT');
 }
 
 function initializeDb(db: Database.Database) {
@@ -54,6 +73,7 @@ function initializeDb(db: Database.Database) {
     CREATE TABLE IF NOT EXISTS subjects (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
+      subject_code TEXT,
       department_id TEXT NOT NULL,
       type TEXT NOT NULL DEFAULT 'theory',
       hours_per_week INTEGER DEFAULT 3,
@@ -78,7 +98,8 @@ function initializeDb(db: Database.Database) {
     CREATE TABLE IF NOT EXISTS rooms (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
-      capacity INTEGER DEFAULT 70
+      capacity INTEGER DEFAULT 70,
+      type TEXT DEFAULT 'theory'
     );
 
     CREATE TABLE IF NOT EXISTS classes (
@@ -214,6 +235,35 @@ function initializeDb(db: Database.Database) {
       max_attempts INTEGER DEFAULT 3,
       expires_at TEXT NOT NULL,
       created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS faculty_availability (
+      id TEXT PRIMARY KEY,
+      faculty_id TEXT NOT NULL,
+      day TEXT NOT NULL,
+      period INTEGER NOT NULL,
+      is_available INTEGER DEFAULT 1,
+      FOREIGN KEY (faculty_id) REFERENCES profiles(id),
+      UNIQUE(faculty_id, day, period)
+    );
+
+    CREATE TABLE IF NOT EXISTS generation_logs (
+      id TEXT PRIMARY KEY,
+      timestamp TEXT DEFAULT (datetime('now')),
+      execution_time_ms INTEGER NOT NULL,
+      class_ids_json TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'success',
+      total_slots INTEGER DEFAULT 0,
+      conflict_count INTEGER DEFAULT 0,
+      soft_score_json TEXT,
+      error_message TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS data_change_tracker (
+      id TEXT PRIMARY KEY,
+      table_name TEXT NOT NULL,
+      last_changed TEXT DEFAULT (datetime('now'))
     );
   `);
 

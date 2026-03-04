@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Users, GraduationCap, ClipboardCheck, Calendar, ArrowRight, Clock, Sparkles, TrendingUp, BookOpen, Building2 } from 'lucide-react';
+import { Users, GraduationCap, ClipboardCheck, Calendar, ArrowRight, Clock, Sparkles, TrendingUp, BookOpen, Building2, Upload, Activity } from 'lucide-react';
 import Link from 'next/link';
 
 export default function AdminDashboard() {
@@ -25,7 +25,9 @@ export default function AdminDashboard() {
     const quickActions = [
         { label: 'Generate Timetable', desc: 'Create optimized schedules', href: '/admin/timetable', icon: Sparkles, color: '#6366f1' },
         { label: 'View Timetables', desc: 'Browse generated schedules', href: '/admin/timetables', icon: BookOpen, color: '#22c55e' },
+        { label: 'Data Import', desc: 'Bulk upload CSV data', href: '/admin/data-import', icon: Upload, color: '#14b8a6' },
         { label: 'Manage Rooms', desc: 'Classrooms & labs', href: '/admin/rooms', icon: Building2, color: '#8b5cf6' },
+        { label: 'Generation Logs', desc: 'Audit generation history', href: '/admin/logs', icon: Activity, color: '#f43f5e' },
         { label: 'Faculty Approvals', desc: 'Review pending requests', href: '/admin/approvals', icon: ClipboardCheck, color: '#f59e0b' },
     ];
 

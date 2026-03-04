@@ -1,25 +1,44 @@
 import nodemailer from 'nodemailer';
 
-const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: Number(process.env.SMTP_PORT),
-    secure: false,
-    auth: {
+let transporter: nodemailer.Transporter | null = null;
+
+try {
+  if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
+    transporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: Number(process.env.SMTP_PORT) || 587,
+      secure: false,
+      auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS,
-    },
-});
+      },
+      connectionTimeout: 5000,  // 5 second connection timeout
+      socketTimeout: 5000,      // 5 second socket timeout
+      greetingTimeout: 5000,    // 5 second greeting timeout
+    });
+  }
+} catch (e) {
+  console.warn('SMTP transport creation failed:', e);
+}
 
 export function generateOTP(): string {
-    return Math.floor(100000 + Math.random() * 900000).toString();
+  return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
 export async function sendOTPEmail(to: string, otp: string, name: string) {
-    const mailOptions = {
-        from: `"OptiSchedule" <${process.env.SMTP_USER}>`,
-        to,
-        subject: 'Your OptiSchedule Verification Code',
-        html: `
+  // Always log OTP to console for development/demo
+  console.log(`\n📧 OTP for ${to}: ${otp}\n`);
+
+  if (!transporter) {
+    console.warn('SMTP not configured — OTP logged to console only');
+    return;
+  }
+
+  const mailOptions = {
+    from: `"OptiSchedule" <${process.env.SMTP_USER}>`,
+    to,
+    subject: 'Your OptiSchedule Verification Code',
+    html: `
       <div style="font-family: 'Inter', sans-serif; max-width: 500px; margin: 0 auto; background: linear-gradient(135deg, #0f172a, #1e1b4b); padding: 40px; border-radius: 16px;">
         <h1 style="color: #818cf8; font-size: 28px; text-align: center; margin-bottom: 8px;">OptiSchedule</h1>
         <p style="color: #94a3b8; text-align: center; font-size: 14px; margin-bottom: 30px;">AI Powered Academic Timetable Generator</p>
@@ -34,17 +53,30 @@ export async function sendOTPEmail(to: string, otp: string, name: string) {
         <p style="color: #475569; font-size: 12px; text-align: center; margin-top: 24px;">If you didn't request this code, please ignore this email.</p>
       </div>
     `,
-    };
+  };
 
+  try {
     await transporter.sendMail(mailOptions);
+    console.log(`✅ OTP email sent to ${to}`);
+  } catch (error) {
+    console.error(`❌ Failed to send OTP email to ${to}:`, error);
+    // Don't throw — OTP is saved in DB and logged to console
+  }
 }
 
 export async function sendPasswordResetEmail(to: string, resetLink: string, name: string) {
-    const mailOptions = {
-        from: `"OptiSchedule" <${process.env.SMTP_USER}>`,
-        to,
-        subject: 'Reset Your OptiSchedule Password',
-        html: `
+  console.log(`\n🔑 Password reset link for ${to}: ${resetLink}\n`);
+
+  if (!transporter) {
+    console.warn('SMTP not configured — reset link logged to console only');
+    return;
+  }
+
+  const mailOptions = {
+    from: `"OptiSchedule" <${process.env.SMTP_USER}>`,
+    to,
+    subject: 'Reset Your OptiSchedule Password',
+    html: `
       <div style="font-family: 'Inter', sans-serif; max-width: 500px; margin: 0 auto; background: linear-gradient(135deg, #0f172a, #1e1b4b); padding: 40px; border-radius: 16px;">
         <h1 style="color: #818cf8; font-size: 28px; text-align: center; margin-bottom: 8px;">OptiSchedule</h1>
         <p style="color: #94a3b8; text-align: center; font-size: 14px; margin-bottom: 30px;">Password Reset Request</p>
@@ -58,7 +90,11 @@ export async function sendPasswordResetEmail(to: string, resetLink: string, name
         </div>
       </div>
     `,
-    };
+  };
 
+  try {
     await transporter.sendMail(mailOptions);
+  } catch (error) {
+    console.error(`❌ Failed to send reset email to ${to}:`, error);
+  }
 }
